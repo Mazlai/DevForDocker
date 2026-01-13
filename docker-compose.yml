@@ -1,0 +1,112 @@
+services:
+  # ===== FRONTEND (Angular) =====
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend-angular
+    ports:
+      - "4200:4200"
+    networks:
+      - app-network
+    restart: unless-stopped
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-512m}
+    cpus: ${FRONTEND_CPU_LIMIT:-0.5}
+
+  # ===== BACKEND (PHP-FPM) =====
+  php-fpm:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-php
+    volumes:
+      - ./backend/src:/var/www/html
+    expose:
+      - "9000"
+    networks:
+      - app-network
+    restart: unless-stopped
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-256m}
+    cpus: ${BACKEND_CPU_LIMIT:-0.5}
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm8.3 -t || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===== SERVEUR WEB (Nginx) =====
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: server-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend/src:/var/www/html
+    depends_on:
+      php-fpm:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    mem_limit: ${SERVER_MEMORY_LIMIT:-128m}
+    cpus: ${SERVER_CPU_LIMIT:-0.25}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===== OUTILS DE SUPERVISION =====
+  portainer:
+    build:
+      context: ./tools/portainer
+      dockerfile: Dockerfile
+    container_name: portainer-custom
+    ports:
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    depends_on:
+      nginx:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    mem_limit: ${PORTAINER_MEMORY_LIMIT:-256m}
+    cpus: ${PORTAINER_CPU_LIMIT:-0.25}
+
+  cadvisor:
+    build:
+      context: ./tools/cadvisor
+      dockerfile: Dockerfile
+    container_name: cadvisor-custom
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    command:
+      - '--docker_only=true'
+      - '--disable_metrics=percpu,sched,tcp,udp,disk,diskIO,hugetlb,referenced_memory,cpu_topology,resctrl'
+    depends_on:
+      portainer:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
+    mem_limit: ${CADVISOR_MEMORY_LIMIT:-128m}
+    cpus: ${CADVISOR_CPU_LIMIT:-0.25}
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  portainer_data:
