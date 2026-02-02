@@ -1,9 +1,24 @@
-# Image Frontend Angular personnalisée
+# =============================================================================
+# Image Frontend Angular personnalisée depuis Ubuntu 24.04
+# =============================================================================
+# Cette image contient une application Angular servie via http-server.
+# Construite depuis Ubuntu pour respecter la contrainte "0 images Docker Hub".
+# =============================================================================
+
 FROM ubuntu:24.04
+
+LABEL maintainer="DevForDocker"
+LABEL description="Frontend Angular - Application web personnalisée"
+LABEL version="1.0"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Installer Node.js et npm
+# -----------------------------------------------------------------------------
+# Installation des dépendances système
+# -----------------------------------------------------------------------------
+# - curl, gnupg, ca-certificates : nécessaires pour ajouter le dépôt NodeSource
+# - nodejs : runtime JavaScript (inclut npm)
+# -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gnupg \
@@ -16,7 +31,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Installer Angular CLI
+# -----------------------------------------------------------------------------
+# Installation des outils Node.js globaux
+# -----------------------------------------------------------------------------
+# - @angular/cli : CLI Angular pour build et développement
+# - http-server : serveur HTTP léger pour servir les fichiers statiques
+# -----------------------------------------------------------------------------
 RUN npm install -g @angular/cli http-server
 
 WORKDIR /app
@@ -24,8 +44,25 @@ WORKDIR /app
 # Copier le projet Angular
 COPY . .
 
-# Installer les dépendances et construire
+# -----------------------------------------------------------------------------
+# Build de l'application Angular
+# -----------------------------------------------------------------------------
+# - npm install : installe les dépendances du package.json
+# - ng build : compile l'application en mode production (optimisé)
+# -----------------------------------------------------------------------------
 RUN npm install && ng build --configuration=production
 
+# -----------------------------------------------------------------------------
+# Script d'entrypoint avec gestion SIGTERM
+# -----------------------------------------------------------------------------
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Port HTTP pour l'application Angular
 EXPOSE 4200
+
+# Signal d'arrêt propre
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["http-server", "dist/frontend/browser", "-p", "4200", "-c-1"]
