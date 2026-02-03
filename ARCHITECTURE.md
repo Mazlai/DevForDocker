@@ -251,4 +251,11 @@ Pour visualiser ces schémas :
 
 ---
 
+## Voir aussi
+
+- **[README.md](README.md)** : Documentation principale (images, dépendances, arguments, démarrage rapide)
+- **[.env](.env)** : Variables de configuration des ressources
+
+---
+
 *Schémas générés pour le projet DevForDocker - Février 2026*

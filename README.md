@@ -2,7 +2,7 @@
 
 ## 📋 Table des matières
 - [Présentation](#-présentation)
-- [Architecture](#-architecture)
+- [Architecture](#-architecture) *(→ voir [ARCHITECTURE.md](ARCHITECTURE.md) pour les schémas)*
 - [Images Docker](#-images-docker)
   - [Frontend Angular](#1-frontend-angular)
   - [Backend PHP-FPM](#2-backend-php-fpm)
@@ -10,7 +10,7 @@
   - [Portainer](#4-portainer-supervision)
   - [cAdvisor](#5-cadvisor-monitoring)
 - [Orchestration Docker Compose](#-orchestration-docker-compose)
-- [Gestion des Signaux SIGTERM](#-gestion-des-signaux-sigterm)
+- [Gestion des Signaux](#-gestion-des-signaux-darrêt)
 - [Démarrage Rapide](#-démarrage-rapide)
 
 ---
@@ -29,60 +29,21 @@ Ce projet met en place une architecture virtualisée basée sur Docker, comprena
 
 ## 🏗 Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              RÉSEAU: app-network                            │
-│                                (bridge)                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐                │
-│  │   FRONTEND   │     │    NGINX     │     │   PHP-FPM    │                │
-│  │   (Angular)  │     │  (Reverse    │────▶│   (Backend)  │                │
-│  │              │     │   Proxy)     │     │              │                │
-│  │  Port: 4200  │     │  Port: 8080  │     │  Port: 9000  │                │
-│  │              │     │              │     │  (interne)   │                │
-│  └──────────────┘     └──────────────┘     └──────────────┘                │
-│         │                    │                    │                         │
-│         │                    │                    │                         │
-│         └────────────────────┼────────────────────┘                         │
-│                              │                                               │
-│  ┌──────────────┐     ┌──────────────┐                                      │
-│  │  PORTAINER   │     │   cADVISOR   │                                      │
-│  │ (Gestion     │     │ (Monitoring) │                                      │
-│  │  Docker)     │     │              │                                      │
-│  │              │     │              │                                      │
-│  │ Port: 9443   │     │  Port: 8081  │                                      │
-│  │   (HTTPS)    │     │   (HTTP)     │                                      │
-│  └──────────────┘     └──────────────┘                                      │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+> 📊 **Voir [ARCHITECTURE.md](ARCHITECTURE.md)** pour les schémas détaillés (diagrammes Mermaid, flux de communication, ordre de démarrage, gestion des signaux).
 
-                              HÔTE DOCKER
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Ports exposés :                                                            │
-│  • http://localhost:4200  → Frontend Angular                                │
-│  • http://localhost:8080  → Backend PHP (via Nginx)                         │
-│  • https://localhost:9443 → Portainer (interface Docker)                    │
-│  • http://localhost:8081  → cAdvisor (métriques)                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### Vue d'ensemble
 
-### Flux de communication
+| Service | Port exposé | Rôle |
+|---------|-------------|------|
+| **Frontend** | `4200` | Application Angular (http-server) |
+| **Nginx** | `8080` | Reverse proxy vers PHP-FPM |
+| **PHP-FPM** | `9000` (interne) | Backend PHP |
+| **Portainer** | `9443` (HTTPS) | Interface de gestion Docker |
+| **cAdvisor** | `8081` | Monitoring des conteneurs |
 
-```
-┌────────────┐    HTTP     ┌────────────┐   FastCGI   ┌────────────┐
-│            │  :8080/80   │            │    :9000    │            │
-│   Client   │────────────▶│   Nginx    │────────────▶│  PHP-FPM   │
-│            │             │            │             │            │
-└────────────┘             └────────────┘             └────────────┘
-                                 │
-                                 │ /var/www/html (volume partagé)
-                                 │
-                           ┌─────┴─────┐
-                           │  Backend  │
-                           │   Source  │
-                           └───────────┘
-```
+### Réseau
+
+Tous les conteneurs sont connectés au réseau `app-network` (bridge), permettant la communication inter-conteneurs via les noms DNS Docker.
 
 ---
 
@@ -682,30 +643,15 @@ La directive `cpus` définit la **fraction de CPU** qu'un conteneur peut utilise
 
 ### Ordre de démarrage (depends_on)
 
-```
-┌────────────┐
-│  php-fpm   │ ◄── Démarre en premier
-└─────┬──────┘
-      │ condition: service_healthy
-      ▼
-┌────────────┐
-│   nginx    │ ◄── Attend que PHP-FPM soit healthy
-└─────┬──────┘
-      │ condition: service_healthy
-      ▼
-┌────────────┐
-│ portainer  │ ◄── Attend que Nginx soit healthy
-└─────┬──────┘
-      │ condition: service_started
-      ▼
-┌────────────┐
-│  cadvisor  │ ◄── Démarre en dernier
-└────────────┘
+> 📊 **Voir le diagramme dans [ARCHITECTURE.md](ARCHITECTURE.md#ordre-de-démarrage)**
 
-┌────────────┐
-│  frontend  │ ◄── Indépendant (aucune dépendance)
-└────────────┘
-```
+| Phase | Service | Condition | Attend |
+|-------|---------|-----------|--------|
+| 1 | **php-fpm** | - | Démarre en premier |
+| 2 | **nginx** | `service_healthy` | PHP-FPM healthy |
+| 3 | **portainer** | `service_healthy` | Nginx healthy |
+| 4 | **cadvisor** | `service_started` | Portainer démarré |
+| - | **frontend** | - | Indépendant |
 
 **Pourquoi cet ordre ?**
 1. **PHP-FPM d'abord** : Le backend doit être prêt avant Nginx
@@ -725,6 +671,8 @@ La directive `cpus` définit la **fraction de CPU** qu'un conteneur peut utilise
 
 ## 🛑 Gestion des Signaux d'Arrêt
 
+> 📊 **Voir les diagrammes dans [ARCHITECTURE.md](ARCHITECTURE.md#gestion-des-signaux)**
+
 Docker envoie des signaux aux conteneurs pour leur demander de s'arrêter. Une gestion correcte assure un **arrêt propre** (graceful shutdown) sans perte de données.
 
 ### Comment fonctionne l'arrêt d'un conteneur ?
@@ -735,12 +683,9 @@ Docker envoie des signaux aux conteneurs pour leur demander de s'arrêter. Une g
 
 ### Stratégie adoptée : `exec` + `STOPSIGNAL`
 
-Nous utilisons une approche **simple et efficace** :
-
 ```dockerfile
 # Dans le Dockerfile
 STOPSIGNAL SIGQUIT  # ou SIGTERM selon le processus
-
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["processus", "args"]
 ```
@@ -760,25 +705,11 @@ exec "$@"  # Remplace le shell par le processus principal
 
 | Service | STOPSIGNAL | Comportement |
 |---------|------------|--------------|
-| **Frontend** | `SIGTERM` | http-server (Node.js) s'arrête immédiatement |
-| **PHP-FPM** | `SIGQUIT` | Termine les requêtes PHP en cours, puis s'arrête |
-| **Nginx** | `SIGQUIT` | Termine les connexions HTTP en cours, puis s'arrête |
-| **Portainer** | `SIGTERM` | Arrêt standard (processus Go) |
-| **cAdvisor** | `SIGTERM` | Arrêt standard (processus Go) |
-
-### Différence SIGTERM vs SIGQUIT
-
-| Signal | Comportement | Utilisé par |
-|--------|--------------|-------------|
-| `SIGTERM` | Arrêt immédiat mais propre | http-server, Portainer, cAdvisor |
-| `SIGQUIT` | Arrêt graceful (attend fin des requêtes) | Nginx, PHP-FPM |
-
-### Pourquoi c'est important ?
-
-- **Évite la perte de données** : Les requêtes en cours sont terminées avant l'arrêt
-- **Pas de processus zombie** : Le processus se termine correctement
-- **Respect du timeout Docker** : Évite le `SIGKILL` forcé après 10 secondes
-- **Logs propres** : Les processus écrivent leurs logs de fin correctement
+| **Frontend** | `SIGTERM` | Arrêt immédiat (Node.js) |
+| **PHP-FPM** | `SIGQUIT` | Arrêt graceful (termine les requêtes en cours) |
+| **Nginx** | `SIGQUIT` | Arrêt graceful (termine les connexions actives) |
+| **Portainer** | `SIGTERM` | Arrêt standard (Go) |
+| **cAdvisor** | `SIGTERM` | Arrêt standard (Go) |
 
 ---
 
