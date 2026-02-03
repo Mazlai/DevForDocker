@@ -2,6 +2,29 @@
 
 Ce document présente les schémas d'architecture du projet au format Mermaid (compatible GitHub, GitLab, etc.).
 
+---
+
+## Choix d'Architecture
+
+### Pourquoi cette stack ?
+
+| Composant | Choix | Alternatives possibles | Justification |
+|-----------|-------|----------------------|---------------|
+| **Frontend** | Angular + http-server | React, Vue, nginx | Angular CLI pour le build, http-server léger pour servir |
+| **Backend** | PHP-FPM | Node.js, Python | PHP reste très répandu, FPM est performant |
+| **Serveur Web** | Nginx | Apache, Caddy | Nginx excelle en reverse proxy et performance |
+| **Supervision** | Portainer | Rancher, Kubernetes Dashboard | Léger et adapté pour Docker standalone |
+| **Monitoring** | cAdvisor | Prometheus seul, Grafana | Métriques Docker natives, interface web incluse |
+
+### Pourquoi Ubuntu 24.04 comme base ?
+
+- **LTS (Long Term Support)** : Support jusqu'en 2029
+- **Packages récents** : PHP 8.3, Nginx 1.24+ inclus nativement
+- **Compatibilité** : Large écosystème de packages apt
+- **Respect de la contrainte** : Pas d'images prêtes à l'emploi depuis Docker Hub
+
+---
+
 ## Architecture Globale
 
 ```mermaid
@@ -108,23 +131,55 @@ flowchart LR
     end
     
     subgraph Container["Conteneur"]
-        EP["entrypoint.sh"]
-        TRAP["trap SIGTERM"]
-        PROC["Processus Principal"]
-        CLEAN["cleanup()"]
+        EP["entrypoint.sh<br/>exec $@"]
+        PROC["Processus Principal<br/>(PID 1)"]
     end
     
-    STOP -->|"SIGTERM"| EP
-    EP --> TRAP
-    TRAP -->|"Signal reçu"| CLEAN
-    CLEAN -->|"kill -TERM"| PROC
-    PROC -->|"Arrêt graceful"| EXIT["exit 0"]
+    STOP -->|"STOPSIGNAL<br/>(SIGTERM ou SIGQUIT)"| EP
+    EP -->|"exec remplace<br/>le shell"| PROC
+    PROC -->|"Gestion native<br/>du signal"| EXIT["Arrêt propre"]
 ```
+
+### Stratégie par Service
+
+```mermaid
+flowchart TB
+    subgraph Frontend["Frontend (http-server)"]
+        F1["STOPSIGNAL: SIGTERM"]
+        F2["Node.js gère nativement"]
+        F3["Arrêt immédiat"]
+        F1 --> F2 --> F3
+    end
+    
+    subgraph Backend["Backend (PHP-FPM)"]
+        B1["STOPSIGNAL: SIGQUIT"]
+        B2["PHP-FPM termine<br/>les requêtes en cours"]
+        B3["Arrêt graceful"]
+        B1 --> B2 --> B3
+    end
+    
+    subgraph Web["Serveur Web (Nginx)"]
+        W1["STOPSIGNAL: SIGQUIT"]
+        W2["Nginx termine<br/>les connexions actives"]
+        W3["Arrêt graceful"]
+        W1 --> W2 --> W3
+    end
+```
+
+| Service | Signal | Type d'arrêt | Gestion |
+|---------|--------|--------------|---------|
+| Frontend | SIGTERM | Immédiat | Native (Node.js) |
+| PHP-FPM | SIGQUIT | Graceful | Native (PHP-FPM) |
+| Nginx | SIGQUIT | Graceful | Native (Nginx) |
+| Portainer | SIGTERM | Standard | Native (Go) |
+| cAdvisor | SIGTERM | Standard | Native (Go) |
 
 ## Ressources Allouées
 
+### Limites Mémoire
+
 ```mermaid
-pie title Répartition Mémoire (Total: 1280 Mo)
+pie title Limites Mémoire par Conteneur
     "Frontend (512 Mo)" : 512
     "PHP-FPM (256 Mo)" : 256
     "Portainer (256 Mo)" : 256
@@ -132,14 +187,30 @@ pie title Répartition Mémoire (Total: 1280 Mo)
     "cAdvisor (128 Mo)" : 128
 ```
 
+### Limites CPU
+
+> **Note** : Les valeurs `cpus` représentent une fraction d'un core CPU par conteneur.
+> Ce ne sont **pas des pourcentages du CPU total**, mais des limites individuelles.
+> Exemple : `cpus: 0.5` = le conteneur peut utiliser 50% d'**un** core CPU.
+
 ```mermaid
-pie title Répartition CPU (Total: 175%)
-    "Frontend (50%)" : 50
-    "PHP-FPM (50%)" : 50
-    "Nginx (25%)" : 25
-    "Portainer (25%)" : 25
-    "cAdvisor (25%)" : 25
+flowchart LR
+    subgraph Limites["Limites CPU par conteneur"]
+        FE["Frontend<br/>0.5 core"]
+        PHP["PHP-FPM<br/>0.5 core"]
+        NG["Nginx<br/>0.25 core"]
+        PO["Portainer<br/>0.25 core"]
+        CA["cAdvisor<br/>0.25 core"]
+    end
 ```
+
+| Service | Limite CPU | Signification |
+|---------|-----------|---------------|
+| Frontend | `0.5` | Peut utiliser 50% d'un core |
+| PHP-FPM | `0.5` | Peut utiliser 50% d'un core |
+| Nginx | `0.25` | Peut utiliser 25% d'un core |
+| Portainer | `0.25` | Peut utiliser 25% d'un core |
+| cAdvisor | `0.25` | Peut utiliser 25% d'un core |
 
 ## Communication Inter-Services
 
