@@ -55,7 +55,7 @@ WORKDIR /var/www/html
 # Script d'entrypoint avec gestion SIGTERM
 # -----------------------------------------------------------------------------
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Port FastCGI pour communication avec Nginx
 EXPOSE 9000

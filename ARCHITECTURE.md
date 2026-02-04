@@ -135,7 +135,7 @@ flowchart LR
         PROC["Processus Principal<br/>(PID 1)"]
     end
     
-    STOP -->|"STOPSIGNAL<br/>(SIGTERM ou SIGQUIT)"| EP
+    STOP -->|"Signal<br/>(défaut: SIGTERM)"| EP
     EP -->|"exec remplace<br/>le shell"| PROC
     PROC -->|"Gestion native<br/>du signal"| EXIT["Arrêt propre"]
 ```
@@ -145,34 +145,36 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Frontend["Frontend (http-server)"]
-        F1["STOPSIGNAL: SIGTERM"]
+        F1["Signal: SIGTERM (défaut)"]
         F2["Node.js gère nativement"]
-        F3["Arrêt immédiat"]
+        F3["Arrêt propre"]
         F1 --> F2 --> F3
     end
     
     subgraph Backend["Backend (PHP-FPM)"]
-        B1["STOPSIGNAL: SIGQUIT"]
+        B1["STOPSIGNAL: SIGQUIT ✅"]
         B2["PHP-FPM termine<br/>les requêtes en cours"]
         B3["Arrêt graceful"]
         B1 --> B2 --> B3
     end
     
     subgraph Web["Serveur Web (Nginx)"]
-        W1["STOPSIGNAL: SIGQUIT"]
+        W1["STOPSIGNAL: SIGQUIT ✅"]
         W2["Nginx termine<br/>les connexions actives"]
         W3["Arrêt graceful"]
         W1 --> W2 --> W3
     end
 ```
 
-| Service | Signal | Type d'arrêt | Gestion |
-|---------|--------|--------------|---------|
-| Frontend | SIGTERM | Immédiat | Native (Node.js) |
-| PHP-FPM | SIGQUIT | Graceful | Native (PHP-FPM) |
-| Nginx | SIGQUIT | Graceful | Native (Nginx) |
-| Portainer | SIGTERM | Standard | Native (Go) |
-| cAdvisor | SIGTERM | Standard | Native (Go) |
+> **Note** : SIGTERM est le signal par défaut de Docker. On ne définit `STOPSIGNAL` que pour PHP-FPM et Nginx qui nécessitent SIGQUIT pour un arrêt graceful.
+
+| Service | Signal | Défini explicitement ? | Type d'arrêt | Gestion |
+|---------|--------|------------------------|--------------|---------|
+| Frontend | SIGTERM | Non (défaut) | Propre | Native (Node.js) |
+| PHP-FPM | SIGQUIT | ✅ Oui | Graceful | Native (PHP-FPM) |
+| Nginx | SIGQUIT | ✅ Oui | Graceful | Native (Nginx) |
+| Portainer | SIGTERM | Non (défaut) | Propre | Native (Go) |
+| cAdvisor | SIGTERM | Non (défaut) | Propre | Native (Go) |
 
 ## Ressources Allouées
 

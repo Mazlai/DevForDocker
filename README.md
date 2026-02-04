@@ -101,8 +101,8 @@ exec "$@"
 
 **Pourquoi `exec` ?** 
 - `exec` remplace le processus shell (PID 1) par `http-server`
-- Docker envoie SIGTERM directement à `http-server` (pas au shell)
-- `http-server` (Node.js) gère nativement SIGTERM et s'arrête proprement
+- Docker envoie SIGTERM (signal par défaut) directement à `http-server`
+- `http-server` (Node.js) gère nativement SIGTERM → pas besoin de définir `STOPSIGNAL`
 - Pas besoin de trap manuel car le processus reçoit directement les signaux
 
 ---
@@ -302,9 +302,9 @@ exec /opt/portainer/portainer "$@"
 ```
 
 **Pourquoi `exec` ?**
-- Portainer est écrit en Go et gère nativement SIGTERM
-- `exec` assure que Portainer est PID 1
-- Arrêt propre automatique sans trap manuel
+- Portainer est écrit en Go et gère nativement SIGTERM (signal par défaut de Docker)
+- `exec` assure que Portainer est PID 1 et reçoit directement les signaux
+- Pas besoin de définir `STOPSIGNAL` car SIGTERM est déjà le défaut
 
 ---
 
@@ -337,6 +337,8 @@ exec /opt/portainer/portainer "$@"
 | **Nettoyage cache apt** | `apt-get clean && rm -rf /var/lib/apt/lists/*` | Réduit la taille de l'image |
 
 #### Arguments au Run (CMD)
+
+> **Note** : Ces arguments sont définis dans le Dockerfile (CMD) et également surchargés dans le `docker-compose.yml` via la directive `command:` pour une meilleure visibilité.
 
 | Argument | Valeur | Explication |
 |----------|--------|-------------|
@@ -378,217 +380,71 @@ exec /usr/local/bin/cadvisor "$@"
 ```
 
 **Pourquoi `exec` ?**
-- cAdvisor est écrit en Go et gère nativement SIGTERM
-- `exec` assure que cAdvisor est PID 1
-- Arrêt propre automatique
+- cAdvisor est écrit en Go et gère nativement SIGTERM (signal par défaut de Docker)
+- `exec` assure que cAdvisor est PID 1 et reçoit directement les signaux
+- Pas besoin de définir `STOPSIGNAL` car SIGTERM est déjà le défaut
 
 ---
 
 ## 🎼 Orchestration Docker Compose
 
-### Variables d'environnement
+**Fichier** : `docker-compose.yml`
 
-Les ressources sont configurables via le fichier `.env` ou des variables d'environnement :
-- Affiche les logs de démarrage
+Ce fichier orchestre l'ensemble des services de l'application, définissant comment ils interagissent, leurs ressources, et leurs dépendances.
 
----
+### Structure du fichier docker-compose.yml
 
-### 3. Serveur Web Nginx
+```yaml
+services:          # Définition des 5 conteneurs
+  frontend:        # Application Angular
+  php-fpm:         # Backend PHP
+  nginx:           # Serveur web / reverse proxy
+  portainer:       # Interface de gestion Docker
+  cadvisor:        # Monitoring des conteneurs
 
-**Fichier** : `nginx/Dockerfile`
+networks:          # Réseau interne pour la communication
+  app-network:     # Bridge network isolé
 
-#### Choix au Build
-
-| Choix | Justification |
-|-------|---------------|
-| **Image de base `ubuntu:24.04`** | Cohérence et version récente de Nginx (1.24+). |
-| **Nginx comme reverse proxy** | Nginx excelle pour servir des fichiers statiques et proxifier vers PHP-FPM via FastCGI. |
-| **Mode foreground (`daemon off`)** | Docker nécessite un processus en foreground pour surveiller le conteneur. |
-| **Suppression config par défaut** | Évite les conflits avec notre configuration personnalisée. |
-
-#### Dépendances installées
-
-| Package | Rôle | Pourquoi ? |
-|---------|------|------------|
-| `nginx` | Serveur web haute performance | Reverse proxy vers PHP-FPM, serveur de fichiers statiques |
-| `curl` | Client HTTP | Utilisé par le healthcheck pour vérifier que Nginx répond |
-
-#### Opérations sur l'OS
-
-| Opération | Commande | Justification |
-|-----------|----------|---------------|
-| **Suppression config par défaut** | `rm -f /etc/nginx/sites-enabled/default` | La config Ubuntu par défaut affiche une page "Welcome to nginx" |
-| **Copie config personnalisée** | `COPY nginx.conf /etc/nginx/sites-enabled/default` | Notre config définit le proxy FastCGI vers PHP-FPM |
-| **Mode foreground** | `echo "daemon off;" >> /etc/nginx/nginx.conf` | Empêche Nginx de se daemoniser |
-| **Nettoyage cache apt** | `apt-get clean && rm -rf /var/lib/apt/lists/*` | Réduit la taille de l'image |
-
-#### Configuration Nginx (`nginx.conf`)
-
-```nginx
-server {
-    listen 80;                          # Écoute sur le port 80 (HTTP)
-    server_name localhost;
-    root /var/www/html;                 # Répertoire des fichiers PHP
-    index index.php index.html;
-
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    location ~ \.php$ {
-        fastcgi_pass php-fpm:9000;      # Proxy vers le conteneur PHP-FPM (nom DNS Docker)
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
-    }
-}
+volumes:           # Volumes persistants
+  portainer_data:  # Données Portainer
 ```
 
-#### Arguments au Run (CMD)
+### Volumes utilisés
 
-| Argument | Valeur | Explication |
-|----------|--------|-------------|
-| `nginx` | - | Lance Nginx (en foreground grâce à `daemon off;`) |
+#### Volumes Bind Mount (dossiers locaux)
 
-#### Port exposé
+| Volume | Services | Mode | Explication |
+|--------|----------|------|-------------|
+| `./backend/src:/var/www/html` | php-fpm, nginx | RW | Partage le code PHP entre l'hôte et les conteneurs. Permet de modifier le code sans reconstruire l'image. Nginx sert les fichiers, PHP-FPM les exécute. |
+| `/var/run/docker.sock:/var/run/docker.sock` | portainer | RW | Socket Docker permettant à Portainer de communiquer avec le daemon Docker pour gérer les conteneurs, images, volumes. |
+| `/:/rootfs` | cadvisor | RO | Accès au système de fichiers racine de l'hôte pour collecter les métriques système. |
+| `/var/run:/var/run` | cadvisor | RO | Accès aux sockets et PIDs des processus en cours. |
+| `/sys:/sys` | cadvisor | RO | Accès aux informations du noyau Linux (CPU, mémoire, cgroups). |
+| `/var/lib/docker/:/var/lib/docker/` | cadvisor | RO | Accès aux données Docker pour les métriques de stockage des conteneurs. |
 
-| Port | Protocole | Usage |
-|------|-----------|-------|
-| `80` | HTTP | Requêtes web entrantes (mappé sur 8080 côté hôte) |
+> **Note** : Le flag `:ro` signifie **lecture seule** (read-only) - cAdvisor ne peut pas modifier ces fichiers.
 
-#### Entrypoint
+#### Volumes Nommés (persistance Docker)
 
-Le script `entrypoint.sh` utilise `exec "$@"` :
-- `exec` remplace le shell par Nginx (PID 1)
-- Nginx gère nativement `SIGQUIT` pour un arrêt graceful
-- `STOPSIGNAL SIGQUIT` défini dans le Dockerfile
+| Volume | Service | Chemin interne | Explication |
+|--------|---------|----------------|-------------|
+| `portainer_data` | portainer | `/data` | Stocke la base de données Portainer (utilisateurs, configurations, paramètres). Persiste même si le conteneur est supprimé. Géré par Docker dans `/var/lib/docker/volumes/`. |
 
----
+### Réseau Docker
 
-### 4. Portainer (Supervision)
+```yaml
+networks:
+  app-network:
+    driver: bridge
+```
 
-**Fichier** : `tools/portainer/Dockerfile`
+| Propriété | Valeur | Explication |
+|-----------|--------|-------------|
+| **Nom** | `app-network` | Réseau Docker isolé pour l'application |
+| **Driver** | `bridge` | Mode bridge : les conteneurs peuvent communiquer entre eux via leurs noms DNS |
+| **Isolation** | Oui | Les conteneurs de ce réseau sont isolés des autres réseaux Docker |
 
-#### Choix au Build
-
-| Choix | Justification |
-|-------|---------------|
-| **Image de base `ubuntu:24.04`** | Respecte la contrainte. Portainer est un binaire Go statique. |
-| **Téléchargement depuis GitHub Releases** | Portainer est distribué sous forme de binaire précompilé. |
-| **Version fixée (2.19.4)** | Reproductibilité des builds. |
-
-#### Dépendances installées
-
-| Package | Rôle | Pourquoi ? |
-|---------|------|------------|
-| `wget` | Téléchargement HTTP | Récupère l'archive Portainer depuis GitHub |
-| `ca-certificates` | Certificats SSL | Nécessaire pour HTTPS |
-| `tzdata` | Fuseaux horaires | Portainer affiche des timestamps |
-
-#### Opérations sur l'OS
-
-| Opération | Commande | Justification |
-|-----------|----------|---------------|
-| **Téléchargement Portainer** | `wget -q "https://github.com/.../portainer-...-linux-amd64.tar.gz"` | Récupère l'archive officielle |
-| **Extraction archive** | `tar -xzf /tmp/portainer.tar.gz -C /opt/` | Extrait dans /opt/portainer/ |
-| **Permissions exécution** | `chmod +x /opt/portainer/portainer` | Rend le binaire exécutable |
-| **Création répertoire data** | `mkdir -p /data` | Stockage persistant des configurations |
-| **Nettoyage** | `rm /tmp/portainer.tar.gz` | Réduit la taille de l'image |
-
-#### Arguments au Run (CMD)
-
-| Argument | Valeur | Explication |
-|----------|--------|-------------|
-| `--bind-https` | `:9443` | Portainer écoute en HTTPS sur le port 9443 |
-| `--data` | `/data` | Répertoire de stockage des données persistantes |
-
-#### Port exposé
-
-| Port | Protocole | Usage |
-|------|-----------|-------|
-| `9443` | HTTPS | Interface web de gestion Docker |
-
-#### Volumes requis
-
-| Volume | Mode | Pourquoi ? |
-|--------|------|------------|
-| `/var/run/docker.sock` | RW | Communication avec le daemon Docker |
-| `portainer_data:/data` | RW | Persistance des données |
-
-#### Entrypoint
-
-Le script `entrypoint.sh` utilise `exec /opt/portainer/portainer "$@"` :
-- Portainer (Go) gère nativement SIGTERM
-- Arrêt propre automatique
-
----
-
-### 5. cAdvisor (Monitoring)
-
-**Fichier** : `tools/cadvisor/Dockerfile`
-
-#### Choix au Build
-
-| Choix | Justification |
-|-------|---------------|
-| **Image de base `ubuntu:24.04`** | Respecte la contrainte. |
-| **Téléchargement depuis GitHub Releases** | Binaire précompilé officiel de Google. |
-| **Version fixée (v0.47.2)** | Reproductibilité et stabilité. |
-
-#### Dépendances installées
-
-| Package | Rôle | Pourquoi ? |
-|---------|------|------------|
-| `wget` | Téléchargement HTTP | Récupère le binaire cAdvisor |
-| `ca-certificates` | Certificats SSL | Connexions HTTPS |
-| `dmidecode` | Infos matérielles | cAdvisor l'utilise pour les infos hardware |
-
-#### Opérations sur l'OS
-
-| Opération | Commande | Justification |
-|-----------|----------|---------------|
-| **Téléchargement cAdvisor** | `wget -q "https://github.com/.../cadvisor-..." -O /usr/local/bin/cadvisor` | Télécharge dans le PATH |
-| **Permissions exécution** | `chmod +x /usr/local/bin/cadvisor` | Rend le binaire exécutable |
-| **Nettoyage cache apt** | `apt-get clean && rm -rf /var/lib/apt/lists/*` | Réduit la taille de l'image |
-
-#### Arguments au Run (CMD)
-
-| Argument | Valeur | Explication |
-|----------|--------|-------------|
-| `--docker_only=true` | - | Ne surveille que les conteneurs Docker |
-| `--disable_metrics=...` | Voir ci-dessous | Désactive les métriques non nécessaires |
-
-**Métriques désactivées :**
-- `percpu`, `sched` : Détails CPU avancés non nécessaires
-- `tcp`, `udp` : Métriques réseau trop détaillées
-- `disk`, `diskIO` : Métriques disque non pertinentes
-- `hugetlb`, `referenced_memory` : Détails mémoire avancés
-- `cpu_topology`, `resctrl` : Fonctionnalités kernel avancées
-
-#### Port exposé
-
-| Port | Protocole | Usage |
-|------|-----------|-------|
-| `8080` | HTTP | Interface web (mappé sur 8081 côté hôte) |
-
-#### Volumes requis
-
-| Volume | Mode | Pourquoi ? |
-|--------|------|------------|
-| `/:/rootfs` | RO | Accès au système de fichiers hôte |
-| `/var/run` | RO | Socket Docker |
-| `/sys` | RO | Informations cgroups |
-| `/var/lib/docker/` | RO | Données des conteneurs |
-
-#### Entrypoint
-
-Le script `entrypoint.sh` utilise `exec /usr/local/bin/cadvisor "$@"` :
-- cAdvisor (Go) gère nativement SIGTERM
-- Arrêt propre automatique
-
----
-
-## 🎼 Orchestration Docker Compose
+**Communication inter-services** : Grâce au réseau bridge, Nginx peut atteindre PHP-FPM via `php-fpm:9000` (nom DNS Docker automatique).
 
 ### Variables d'environnement
 
@@ -681,14 +537,7 @@ Docker envoie des signaux aux conteneurs pour leur demander de s'arrêter. Une g
 2. Le conteneur a **10 secondes** (configurable via `--stop-timeout`) pour s'arrêter
 3. Si le conteneur ne s'arrête pas, Docker envoie `SIGKILL` (arrêt forcé)
 
-### Stratégie adoptée : `exec` + `STOPSIGNAL`
-
-```dockerfile
-# Dans le Dockerfile
-STOPSIGNAL SIGQUIT  # ou SIGTERM selon le processus
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["processus", "args"]
-```
+### Stratégie adoptée : `exec` dans l'entrypoint
 
 ```bash
 # Dans entrypoint.sh
@@ -701,15 +550,30 @@ exec "$@"  # Remplace le shell par le processus principal
 - Le processus reçoit **directement** les signaux Docker
 - Pas besoin de `trap` car le processus gère nativement les signaux
 
+### STOPSIGNAL : quand le définir ?
+
+**SIGTERM est le signal par défaut** envoyé par Docker. Il n'est donc **pas nécessaire** de le spécifier dans le Dockerfile si le processus le gère nativement.
+
+On définit explicitement `STOPSIGNAL` uniquement quand on veut un signal **différent** du défaut :
+
+```dockerfile
+# Uniquement pour PHP-FPM et Nginx qui préfèrent SIGQUIT
+STOPSIGNAL SIGQUIT
+```
+
 ### Signaux par service
 
-| Service | STOPSIGNAL | Comportement |
-|---------|------------|--------------|
-| **Frontend** | `SIGTERM` | Arrêt immédiat (Node.js) |
-| **PHP-FPM** | `SIGQUIT` | Arrêt graceful (termine les requêtes en cours) |
-| **Nginx** | `SIGQUIT` | Arrêt graceful (termine les connexions actives) |
-| **Portainer** | `SIGTERM` | Arrêt standard (Go) |
-| **cAdvisor** | `SIGTERM` | Arrêt standard (Go) |
+| Service | Signal reçu | Défini explicitement ? | Comportement |
+|---------|-------------|------------------------|---------------|
+| **Frontend** | `SIGTERM` | Non (défaut Docker) | Node.js s'arrête proprement |
+| **PHP-FPM** | `SIGQUIT` | ✅ Oui | Arrêt graceful (termine les requêtes en cours) |
+| **Nginx** | `SIGQUIT` | ✅ Oui | Arrêt graceful (termine les connexions actives) |
+| **Portainer** | `SIGTERM` | Non (défaut Docker) | Go s'arrête proprement |
+| **cAdvisor** | `SIGTERM` | Non (défaut Docker) | Go s'arrête proprement |
+
+**Pourquoi SIGQUIT pour PHP-FPM et Nginx ?**
+- `SIGTERM` : Arrêt rapide (peut couper des requêtes/connexions en cours)
+- `SIGQUIT` : Arrêt graceful (attend la fin des traitements avant de s'arrêter)
 
 ---
 

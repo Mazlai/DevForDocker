@@ -49,13 +49,13 @@ WORKDIR /opt/portainer
 # Script d'entrypoint avec gestion SIGTERM
 # -----------------------------------------------------------------------------
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Port HTTPS pour l'interface web
 EXPOSE 9443
 
-# Signal d'arrêt propre
-STOPSIGNAL SIGTERM
+# Note: STOPSIGNAL SIGTERM est le défaut de Docker, pas besoin de le spécifier
+# Portainer (Go) gère nativement SIGTERM pour un arrêt propre
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["--bind-https", ":9443", "--data", "/data"]

@@ -56,13 +56,13 @@ RUN npm install && ng build --configuration=production
 # Script d'entrypoint avec gestion SIGTERM
 # -----------------------------------------------------------------------------
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Port HTTP pour l'application Angular
 EXPOSE 4200
 
-# Signal d'arrêt propre
-STOPSIGNAL SIGTERM
+# Note: STOPSIGNAL SIGTERM est le défaut de Docker, pas besoin de le spécifier
+# http-server (Node.js) gère nativement SIGTERM pour un arrêt propre
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["http-server", "dist/frontend/browser", "-p", "4200", "-c-1"]

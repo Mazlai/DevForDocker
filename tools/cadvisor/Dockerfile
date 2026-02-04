@@ -42,13 +42,13 @@ RUN wget -q "https://github.com/google/cadvisor/releases/download/${CADVISOR_VER
 # Script d'entrypoint avec gestion SIGTERM
 # -----------------------------------------------------------------------------
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Port HTTP pour l'interface web et les métriques
 EXPOSE 8080
 
-# Signal d'arrêt propre
-STOPSIGNAL SIGTERM
+# Note: STOPSIGNAL SIGTERM est le défaut de Docker, pas besoin de le spécifier
+# cAdvisor (Go) gère nativement SIGTERM pour un arrêt propre
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["--docker_only=true", "--disable_metrics=percpu,sched,tcp,udp,disk,diskIO,hugetlb,referenced_memory,cpu_topology,resctrl"]
