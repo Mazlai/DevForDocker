@@ -1,39 +1,105 @@
+# =============================================================================
+# Docker Compose - DevForDocker
+# =============================================================================
+# Ce fichier orchestre l'ensemble des services de l'application :
+#   - Frontend Angular servi par http-server
+#   - Backend PHP-FPM pour le traitement des scripts PHP
+#   - Nginx comme reverse proxy et serveur web
+#   - Portainer pour la gestion graphique des conteneurs
+#   - cAdvisor pour le monitoring des ressources
+#
+# Lancement : docker-compose up -d --build
+# Arrêt     : docker-compose down
+# =============================================================================
+
 services:
-  # ===== FRONTEND (Angular) =====
+
+  # ===========================================================================
+  # FRONTEND - Application Angular
+  # ===========================================================================
+  # Rôle : Sert l'interface utilisateur Angular compilée
+  # Technologie : Node.js + http-server (serveur de fichiers statiques)
+  # ===========================================================================
   frontend:
+    # --- BUILD ---
+    # Construit l'image depuis le Dockerfile dans ./frontend
     build:
       context: ./frontend
       dockerfile: Dockerfile
+
     container_name: frontend-angular
+
+    # --- RÉSEAU ---
+    # Port 4200 exposé à l'hôte pour accès direct au frontend
     ports:
       - "4200:4200"
-    # Arguments au run : http-server sert les fichiers buildés sur le port 4200
-    # -c-1 désactive le cache HTTP (utile pour le développement)
+
+    # --- COMMANDE DE DÉMARRAGE ---
+    # http-server sert les fichiers compilés Angular
+    # -p 4200 : port d'écoute
+    # -c-1 : désactive le cache (utile en développement)
     command: ["http-server", "dist/frontend/browser", "-p", "4200", "-c-1"]
+
     networks:
       - app-network
-    restart: unless-stopped
-    mem_limit: ${FRONTEND_MEMORY_LIMIT:-512m}
-    cpus: ${FRONTEND_CPU_LIMIT:-0.5}
 
-  # ===== BACKEND (PHP-FPM) =====
+    # Redémarre automatiquement sauf arrêt manuel
+    restart: unless-stopped
+
+    # --- RESSOURCES (voir .env pour personnalisation) ---
+    deploy:
+      resources:
+        limits:
+          memory: ${FRONTEND_MEMORY_LIMIT:-512m}
+          cpus: '${FRONTEND_CPU_LIMIT:-0.5}'
+        reservations:
+          memory: ${FRONTEND_MEMORY_RESERVATION:-128m}
+          cpus: '${FRONTEND_CPU_RESERVATION:-0.1}'
+
+  # ===========================================================================
+  # BACKEND - PHP-FPM
+  # ===========================================================================
+  # Rôle : Exécute les scripts PHP via FastCGI
+  # Technologie : PHP 8.3 FPM
+  # ===========================================================================
   php-fpm:
     build:
       context: ./backend
       dockerfile: Dockerfile
+
     container_name: backend-php
+
+    # --- VOLUMES ---
+    # Monte le code source PHP pour permettre les modifications à chaud
     volumes:
       - ./backend/src:/var/www/html
+
+    # --- RÉSEAU ---
+    # Port 9000 exposé uniquement aux autres conteneurs (pas à l'hôte)
+    # Nginx communique avec PHP-FPM via ce port
     expose:
       - "9000"
-    # Arguments au run : -F force le mode foreground (nécessaire pour Docker)
-    # PHP-FPM écoute sur le port 9000 (configuré dans le Dockerfile via sed)
+
+    # --- COMMANDE DE DÉMARRAGE ---
+    # -F : mode foreground (obligatoire pour Docker)
     command: ["php-fpm8.3", "-F"]
+
     networks:
       - app-network
     restart: unless-stopped
-    mem_limit: ${BACKEND_MEMORY_LIMIT:-256m}
-    cpus: ${BACKEND_CPU_LIMIT:-0.5}
+
+    deploy:
+      resources:
+        limits:
+          memory: ${BACKEND_MEMORY_LIMIT:-256m}
+          cpus: '${BACKEND_CPU_LIMIT:-0.5}'
+        reservations:
+          memory: ${BACKEND_MEMORY_RESERVATION:-64m}
+          cpus: '${BACKEND_CPU_RESERVATION:-0.1}'
+
+    # --- HEALTHCHECK ---
+    # Vérifie que PHP-FPM est fonctionnel
+    # Utilisé par Nginx pour attendre que le backend soit prêt
     healthcheck:
       test: ["CMD-SHELL", "php-fpm8.3 -t || exit 1"]
       interval: 30s
@@ -41,27 +107,55 @@ services:
       retries: 3
       start_period: 10s
 
-  # ===== SERVEUR WEB (Nginx) =====
+  # ===========================================================================
+  # NGINX - Serveur Web / Reverse Proxy
+  # ===========================================================================
+  # Rôle : Point d'entrée HTTP, sert les fichiers statiques et proxy vers PHP
+  # Technologie : Nginx
+  # ===========================================================================
   nginx:
     build:
       context: ./nginx
       dockerfile: Dockerfile
+
     container_name: server-nginx
+
+    # --- RÉSEAU ---
+    # Port 8080 sur l'hôte → Port 80 dans le conteneur
+    # Accès : http://localhost:8080
     ports:
       - "8080:80"
+
+    # --- VOLUMES ---
+    # Même volume que PHP-FPM pour servir les fichiers statiques
     volumes:
       - ./backend/src:/var/www/html
-    # Arguments au run : nginx démarre en foreground (daemon off configuré dans Dockerfile)
-    # Pas d'arguments supplémentaires nécessaires
+
+    # --- COMMANDE DE DÉMARRAGE ---
+    # Nginx démarre en foreground (daemon off dans nginx.conf)
     command: ["nginx"]
+
+    # --- DÉPENDANCES ---
+    # Attend que PHP-FPM soit healthy avant de démarrer
     depends_on:
       php-fpm:
         condition: service_healthy
+
     networks:
       - app-network
     restart: unless-stopped
-    mem_limit: ${SERVER_MEMORY_LIMIT:-128m}
-    cpus: ${SERVER_CPU_LIMIT:-0.25}
+
+    deploy:
+      resources:
+        limits:
+          memory: ${SERVER_MEMORY_LIMIT:-128m}
+          cpus: '${SERVER_CPU_LIMIT:-0.25}'
+        reservations:
+          memory: ${SERVER_MEMORY_RESERVATION:-32m}
+          cpus: '${SERVER_CPU_RESERVATION:-0.05}'
+
+    # --- HEALTHCHECK ---
+    # Vérifie que Nginx répond aux requêtes HTTP
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -69,58 +163,121 @@ services:
       retries: 3
       start_period: 10s
 
-  # ===== OUTILS DE SUPERVISION =====
+  # ===========================================================================
+  # PORTAINER - Interface de gestion Docker
+  # ===========================================================================
+  # Rôle : Interface web pour gérer les conteneurs, images, volumes...
+  # Accès : https://localhost:9443
+  # ===========================================================================
   portainer:
     build:
       context: ./tools/portainer
       dockerfile: Dockerfile
+
     container_name: portainer-custom
+
+    # --- RÉSEAU ---
+    # Port HTTPS 9443 pour l'interface d'administration
     ports:
       - "9443:9443"
+
+    # --- VOLUMES ---
+    # docker.sock : permet à Portainer de contrôler Docker
+    # portainer_data : persistance des données (users, settings...)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
-    # Arguments au run : --bind-https active HTTPS sur le port 9443
-    # --data spécifie le répertoire de stockage persistant
+
+    # --- COMMANDE DE DÉMARRAGE ---
+    # --bind-https : active HTTPS sur le port 9443
+    # --data : répertoire de stockage persistant
     command: ["--bind-https", ":9443", "--data", "/data"]
+
     depends_on:
       nginx:
         condition: service_healthy
+
     networks:
       - app-network
     restart: unless-stopped
-    mem_limit: ${PORTAINER_MEMORY_LIMIT:-256m}
-    cpus: ${PORTAINER_CPU_LIMIT:-0.25}
 
+    deploy:
+      resources:
+        limits:
+          memory: ${PORTAINER_MEMORY_LIMIT:-256m}
+          cpus: '${PORTAINER_CPU_LIMIT:-0.25}'
+        reservations:
+          memory: ${PORTAINER_MEMORY_RESERVATION:-64m}
+          cpus: '${PORTAINER_CPU_RESERVATION:-0.05}'
+
+  # ===========================================================================
+  # CADVISOR - Monitoring des conteneurs
+  # ===========================================================================
+  # Rôle : Collecte et expose les métriques de ressources des conteneurs
+  # Accès : http://localhost:8081
+  # ===========================================================================
   cadvisor:
     build:
       context: ./tools/cadvisor
       dockerfile: Dockerfile
+
     container_name: cadvisor-custom
+
+    # --- RÉSEAU ---
+    # Port 8081 sur l'hôte → Port 8080 dans le conteneur
     ports:
       - "8081:8080"
+
+    # --- VOLUMES ---
+    # Montages en lecture seule pour accéder aux métriques système
+    # /rootfs : système de fichiers racine
+    # /var/run : sockets et PIDs
+    # /sys : informations kernel (cgroups, etc.)
+    # /var/lib/docker : données Docker (images, conteneurs)
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    # Arguments au run : --docker_only=true limite la surveillance aux conteneurs Docker
-    # --disable_metrics désactive les métriques non nécessaires pour réduire l'overhead
+
+    # --- COMMANDE DE DÉMARRAGE ---
+    # --docker_only : surveille uniquement les conteneurs Docker
+    # --disable_metrics : désactive les métriques inutiles (réduit l'overhead)
     command:
       - '--docker_only=true'
       - '--disable_metrics=percpu,sched,tcp,udp,disk,diskIO,hugetlb,referenced_memory,cpu_topology,resctrl'
+
     depends_on:
       portainer:
         condition: service_started
+
     networks:
       - app-network
     restart: unless-stopped
-    mem_limit: ${CADVISOR_MEMORY_LIMIT:-128m}
-    cpus: ${CADVISOR_CPU_LIMIT:-0.25}
 
+    deploy:
+      resources:
+        limits:
+          memory: ${CADVISOR_MEMORY_LIMIT:-128m}
+          cpus: '${CADVISOR_CPU_LIMIT:-0.25}'
+        reservations:
+          memory: ${CADVISOR_MEMORY_RESERVATION:-32m}
+          cpus: '${CADVISOR_CPU_RESERVATION:-0.05}'
+
+# =============================================================================
+# NETWORKS - Réseau interne
+# =============================================================================
+# Réseau bridge isolé pour la communication inter-conteneurs
+# Tous les services peuvent communiquer entre eux par leur nom de service
+# =============================================================================
 networks:
   app-network:
     driver: bridge
 
+# =============================================================================
+# VOLUMES - Stockage persistant
+# =============================================================================
+# Volume nommé pour persister les données Portainer entre les redémarrages
+# =============================================================================
 volumes:
   portainer_data:

@@ -448,44 +448,89 @@ networks:
 
 ### Variables d'environnement
 
-Les ressources sont configurables via le fichier `.env` ou des variables d'environnement :
+Les ressources sont configurables via le fichier `.env`. Le projet utilise la syntaxe moderne `deploy.resources` avec **limits** (maximum) et **reservations** (minimum garanti) :
+
+#### Variables de Limits (Maximum autorisé)
 
 | Variable | Défaut | Service | Description |
 |----------|--------|---------|-------------|
-| `FRONTEND_MEMORY_LIMIT` | `512m` | Frontend | Limite mémoire maximale |
-| `FRONTEND_CPU_LIMIT` | `0.5` | Frontend | Limite CPU (0.5 = 50% d'un core) |
-| `BACKEND_MEMORY_LIMIT` | `256m` | PHP-FPM | Limite mémoire maximale |
-| `BACKEND_CPU_LIMIT` | `0.5` | PHP-FPM | Limite CPU (0.5 = 50% d'un core) |
-| `SERVER_MEMORY_LIMIT` | `128m` | Nginx | Limite mémoire maximale |
-| `SERVER_CPU_LIMIT` | `0.25` | Nginx | Limite CPU (0.25 = 25% d'un core) |
-| `PORTAINER_MEMORY_LIMIT` | `256m` | Portainer | Limite mémoire maximale |
-| `PORTAINER_CPU_LIMIT` | `0.25` | Portainer | Limite CPU (0.25 = 25% d'un core) |
-| `CADVISOR_MEMORY_LIMIT` | `128m` | cAdvisor | Limite mémoire maximale |
-| `CADVISOR_CPU_LIMIT` | `0.25` | cAdvisor | Limite CPU (0.25 = 25% d'un core) |
+| `FRONTEND_MEMORY_LIMIT` | `512m` | Frontend | Mémoire maximale autorisée |
+| `FRONTEND_CPU_LIMIT` | `0.5` | Frontend | CPU maximum (0.5 = 50% d'un core) |
+| `BACKEND_MEMORY_LIMIT` | `256m` | PHP-FPM | Mémoire maximale autorisée |
+| `BACKEND_CPU_LIMIT` | `0.5` | PHP-FPM | CPU maximum |
+| `SERVER_MEMORY_LIMIT` | `128m` | Nginx | Mémoire maximale autorisée |
+| `SERVER_CPU_LIMIT` | `0.25` | Nginx | CPU maximum |
+| `PORTAINER_MEMORY_LIMIT` | `256m` | Portainer | Mémoire maximale autorisée |
+| `PORTAINER_CPU_LIMIT` | `0.25` | Portainer | CPU maximum |
+| `CADVISOR_MEMORY_LIMIT` | `128m` | cAdvisor | Mémoire maximale autorisée |
+| `CADVISOR_CPU_LIMIT` | `0.25` | cAdvisor | CPU maximum |
+
+#### Variables de Reservations (Minimum garanti)
+
+| Variable | Défaut | Service | Description |
+|----------|--------|---------|-------------|
+| `FRONTEND_MEMORY_RESERVATION` | `128m` | Frontend | Mémoire garantie réservée |
+| `FRONTEND_CPU_RESERVATION` | `0.1` | Frontend | CPU garanti |
+| `BACKEND_MEMORY_RESERVATION` | `64m` | PHP-FPM | Mémoire garantie (1 worker) |
+| `BACKEND_CPU_RESERVATION` | `0.1` | PHP-FPM | CPU garanti |
+| `SERVER_MEMORY_RESERVATION` | `32m` | Nginx | Mémoire garantie |
+| `SERVER_CPU_RESERVATION` | `0.05` | Nginx | CPU garanti |
+| `PORTAINER_MEMORY_RESERVATION` | `64m` | Portainer | Mémoire garantie |
+| `PORTAINER_CPU_RESERVATION` | `0.05` | Portainer | CPU garanti |
+| `CADVISOR_MEMORY_RESERVATION` | `32m` | cAdvisor | Mémoire garantie |
+| `CADVISOR_CPU_RESERVATION` | `0.05` | cAdvisor | CPU garanti |
 
 ### Comprendre les limites de ressources
 
-#### Mémoire (`mem_limit`)
+Le projet utilise la syntaxe moderne `deploy.resources` avec deux niveaux de contrôle :
 
-La directive `mem_limit` définit la **quantité maximale de RAM** qu'un conteneur peut utiliser :
-- `512m` = 512 Mégaoctets
-- `1g` = 1 Gigaoctet
-- Si le conteneur dépasse cette limite, il est tué par l'OOM Killer (Out Of Memory)
+```yaml
+deploy:
+  resources:
+    limits:        # Maximum autorisé (plafond)
+      memory: 512M
+      cpus: '0.5'
+    reservations:  # Minimum garanti (plancher)
+      memory: 128M
+      cpus: '0.1'
+```
 
-#### CPU (`cpus`)
+#### Limits vs Reservations
 
-La directive `cpus` définit la **fraction de CPU** qu'un conteneur peut utiliser :
+| Concept | Rôle | Comportement |
+|---------|------|--------------|
+| **limits** | Plafond maximum | Le conteneur est tué si dépassé (OOM Killer) |
+| **reservations** | Plancher garanti | Ressources réservées même sous pression système |
+
+#### Pourquoi utiliser les deux ?
+
+| Avantage | Explication |
+|----------|-------------|
+| **Garantie de démarrage** | Les reservations assurent que le conteneur démarre toujours avec ses ressources minimales |
+| **Stabilité sous charge** | Même si l'hôte est saturé, les ressources réservées sont protégées |
+| **Scheduling intelligent** | Docker place les conteneurs sur des nœuds avec assez de ressources disponibles |
+| **Protection de l'hôte** | Les limits empêchent un conteneur de monopoliser toutes les ressources |
+
+#### Mémoire
+
+| Concept | Format | Exemple | Comportement |
+|---------|--------|---------|--------------|
+| **limits.memory** | `512m`, `1g` | `memory: 512m` | Le conteneur est tué par l'OOM Killer si dépassé |
+| **reservations.memory** | `128m`, `256m` | `memory: 128m` | Cette quantité est réservée et garantie |
+
+#### CPU
 
 | Valeur | Signification |
 |--------|---------------|
-| `0.25` | Le conteneur peut utiliser 25% d'**un** core CPU |
-| `0.5` | Le conteneur peut utiliser 50% d'**un** core CPU |
-| `1` | Le conteneur peut utiliser **un** core CPU complet |
-| `2` | Le conteneur peut utiliser **deux** cores CPU |
+| `0.05` | 5% d'**un** core CPU |
+| `0.1` | 10% d'**un** core CPU |
+| `0.25` | 25% d'**un** core CPU |
+| `0.5` | 50% d'**un** core CPU |
+| `1` | **Un** core CPU complet |
 
 **Important** : Ce ne sont **pas des pourcentages du CPU total**, mais des limites **par conteneur**. Sur une machine à 4 cores :
-- `cpus: 0.5` = le conteneur peut utiliser au maximum 50% d'un core (soit 12.5% du CPU total)
-- Plusieurs conteneurs avec `cpus: 0.5` peuvent coexister sans problème
+- `limits.cpus: 0.5` = le conteneur peut utiliser au maximum 50% d'un core
+- `reservations.cpus: 0.1` = 10% d'un core est garanti pour ce conteneur
 
 ### Justification des limites de ressources
 
@@ -552,16 +597,20 @@ Avec --disable_metrics : ~80 Mo RAM, ~0.1 CPU (économie de 60%)
 
 #### Récapitulatif et total des ressources
 
-| Service | Mémoire | CPU | Type de charge |
-|---------|---------|-----|----------------|
-| Frontend | 512 Mo | 0.5 | I/O-bound (fichiers statiques) |
-| PHP-FPM | 256 Mo | 0.5 | I/O-bound (requêtes BDD, fichiers) |
-| Nginx | 128 Mo | 0.25 | I/O-bound (proxy HTTP) |
-| Portainer | 256 Mo | 0.25 | Mixte (UI + API Docker) |
-| cAdvisor | 128 Mo | 0.25 | I/O-bound (lecture /proc, /sys) |
-| **TOTAL** | **1.28 Go** | **1.75 CPU** | — |
+| Service | Limite Mémoire | Réservation Mémoire | Limite CPU | Réservation CPU | Type de charge |
+|---------|----------------|---------------------|------------|-----------------|----------------|
+| Frontend | 512 Mo | 128 Mo | 0.5 | 0.1 | I/O-bound (fichiers statiques) |
+| PHP-FPM | 256 Mo | 64 Mo | 0.5 | 0.1 | I/O-bound (requêtes BDD, fichiers) |
+| Nginx | 128 Mo | 32 Mo | 0.25 | 0.05 | I/O-bound (proxy HTTP) |
+| Portainer | 256 Mo | 64 Mo | 0.25 | 0.05 | Mixte (UI + API Docker) |
+| cAdvisor | 128 Mo | 32 Mo | 0.25 | 0.05 | I/O-bound (lecture /proc, /sys) |
+| **TOTAL Limits** | **1.28 Go** | — | **1.75 CPU** | — | — |
+| **TOTAL Reservations** | — | **320 Mo** | — | **0.35 CPU** | — |
 
-> **Note** : Ces limites sont des **maximums**. En utilisation normale, les conteneurs consomment généralement 30-50% de ces valeurs.
+> **Note** : 
+> - **Limits** = Maximum autorisé (le conteneur ne peut pas dépasser)
+> - **Reservations** = Minimum garanti (ressources réservées même sous pression)
+> - En utilisation normale, les conteneurs consomment entre les reservations et les limits
 
 ### Ordre de démarrage (depends_on)
 

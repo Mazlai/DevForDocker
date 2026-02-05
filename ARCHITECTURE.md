@@ -4,6 +4,8 @@ Ce document présente les **schémas visuels** d'architecture du projet au forma
 
 > 📖 **Pour la documentation complète** (explications détaillées, dépendances, arguments, justifications), voir [README.md](README.md).
 
+*Présenté par Mickael FERNANDEZ*
+
 ---
 
 ## Choix d'Architecture
