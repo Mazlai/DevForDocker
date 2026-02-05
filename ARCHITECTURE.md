@@ -1,6 +1,8 @@
 # 📊 Schéma d'Architecture - DevForDocker
 
-Ce document présente les schémas d'architecture du projet au format Mermaid (compatible GitHub, GitLab, etc.).
+Ce document présente les **schémas visuels** d'architecture du projet au format Mermaid (compatible GitHub, GitLab, etc.).
+
+> 📖 **Pour la documentation complète** (explications détaillées, dépendances, arguments, justifications), voir [README.md](README.md).
 
 ---
 
@@ -16,12 +18,76 @@ Ce document présente les schémas d'architecture du projet au format Mermaid (c
 | **Supervision** | Portainer | Rancher, Kubernetes Dashboard | Léger et adapté pour Docker standalone |
 | **Monitoring** | cAdvisor | Prometheus seul, Grafana | Métriques Docker natives, interface web incluse |
 
-### Pourquoi Ubuntu 24.04 comme base ?
+### Comparaison Ubuntu vs Alpine
 
-- **LTS (Long Term Support)** : Support jusqu'en 2029
-- **Packages récents** : PHP 8.3, Nginx 1.24+ inclus nativement
-- **Compatibilité** : Large écosystème de packages apt
-- **Respect de la contrainte** : Pas d'images prêtes à l'emploi depuis Docker Hub
+La question du choix de l'image de base est cruciale en production. Voici une comparaison détaillée :
+
+| Critère | Ubuntu 24.04 | Alpine Linux |
+|---------|--------------|--------------|
+| **Taille de base** | ~78 Mo | ~5 Mo |
+| **Gestionnaire de paquets** | apt (dpkg) | apk |
+| **Bibliothèque C** | glibc | musl libc |
+| **Shell par défaut** | bash | ash (BusyBox) |
+| **Support LTS** | 5 ans (→ 2029) | ~2 ans par version |
+| **Communauté** | Très large | En croissance |
+
+#### Avantages d'Ubuntu (notre choix)
+
+| Avantage | Explication |
+|----------|-------------|
+| **Compatibilité maximale** | glibc est la bibliothèque C standard, tous les binaires précompilés fonctionnent sans problème |
+| **Debugging facilité** | Outils de diagnostic complets (`strace`, `ltrace`, etc.) disponibles |
+| **Documentation abondante** | Très bien documenté, nombreuses ressources en ligne |
+| **Packages récents** | Ubuntu 24.04 inclut PHP 8.3, Nginx 1.24+ nativement |
+| **Stabilité éprouvée** | LTS avec 5 ans de support et mises à jour de sécurité |
+
+#### Avantages d'Alpine (alternative)
+
+| Avantage | Explication |
+|----------|-------------|
+| **Taille d'image réduite** | ~5 Mo vs ~78 Mo pour Ubuntu, gain significatif en stockage et transfert |
+| **Surface d'attaque minimale** | Moins de packages installés = moins de vulnérabilités potentielles |
+| **Démarrage plus rapide** | Image plus petite = pull et démarrage plus rapides |
+| **Optimisé pour les conteneurs** | Conçu dès le départ pour Docker et les microservices |
+
+#### Inconvénients d'Alpine (pourquoi on ne l'utilise pas ici)
+
+| Inconvénient | Impact |
+|--------------|--------|
+| **musl libc vs glibc** | Certains binaires précompilés (comme Portainer, cAdvisor) peuvent avoir des problèmes de compatibilité |
+| **Packages moins nombreux** | Certains packages doivent être compilés manuellement |
+| **Debugging plus difficile** | Outils de base limités (BusyBox), moins de verbosité par défaut |
+| **Problèmes DNS potentiels** | musl gère DNS différemment, peut causer des problèmes avec certaines applications |
+| **Performances variables** | musl peut être plus lent que glibc pour certaines opérations (allocation mémoire, threads) |
+
+#### Comparaison des tailles d'images (estimées)
+
+| Image | Avec Ubuntu 24.04 | Avec Alpine | Économie |
+|-------|-------------------|-------------|----------|
+| Frontend (Node.js) | ~450 Mo | ~150 Mo | ~67% |
+| Backend (PHP-FPM) | ~250 Mo | ~80 Mo | ~68% |
+| Nginx | ~180 Mo | ~25 Mo | ~86% |
+| Portainer | ~280 Mo | ⚠️ Binaire glibc | N/A |
+| cAdvisor | ~200 Mo | ⚠️ Binaire glibc | N/A |
+
+> **Note** : Portainer et cAdvisor sont distribués en binaires compilés pour glibc. Les faire fonctionner sur Alpine nécessiterait d'installer `gcompat` (couche de compatibilité glibc) ou de recompiler depuis les sources.
+
+#### Quand choisir Alpine ?
+
+- ✅ Microservices légers avec peu de dépendances
+- ✅ Applications Node.js ou Go pures (bien supportées sur musl)
+- ✅ Environnements avec bande passante limitée (réduction du temps de pull)
+- ✅ Besoin de réduire la surface d'attaque (sécurité)
+
+#### Quand choisir Ubuntu ?
+
+- ✅ Applications avec binaires précompilés (Portainer, cAdvisor)
+- ✅ Stack PHP (meilleur support des extensions)
+- ✅ Besoin d'outils de debugging avancés
+- ✅ Équipe familière avec l'écosystème Debian/Ubuntu
+- ✅ Support long terme et stabilité prioritaires
+
+**Notre choix : Ubuntu 24.04** pour sa compatibilité universelle avec tous nos composants (binaires glibc de Portainer/cAdvisor) et le respect de la contrainte du projet (images construites depuis zéro).
 
 ---
 
@@ -124,6 +190,8 @@ flowchart TD
 
 ## Gestion des Signaux
 
+> 📖 **Explications détaillées** : voir [README.md - Gestion des Signaux](README.md#-gestion-des-signaux-darrêt)
+
 ```mermaid
 flowchart LR
     subgraph Docker["Docker Engine"]
@@ -166,17 +234,9 @@ flowchart TB
     end
 ```
 
-> **Note** : SIGTERM est le signal par défaut de Docker. On ne définit `STOPSIGNAL` que pour PHP-FPM et Nginx qui nécessitent SIGQUIT pour un arrêt graceful.
-
-| Service | Signal | Défini explicitement ? | Type d'arrêt | Gestion |
-|---------|--------|------------------------|--------------|---------|
-| Frontend | SIGTERM | Non (défaut) | Propre | Native (Node.js) |
-| PHP-FPM | SIGQUIT | ✅ Oui | Graceful | Native (PHP-FPM) |
-| Nginx | SIGQUIT | ✅ Oui | Graceful | Native (Nginx) |
-| Portainer | SIGTERM | Non (défaut) | Propre | Native (Go) |
-| cAdvisor | SIGTERM | Non (défaut) | Propre | Native (Go) |
-
 ## Ressources Allouées
+
+> 📖 **Justifications détaillées** : voir [README.md - Justification des limites](README.md#justification-des-limites-de-ressources)
 
 ### Limites Mémoire
 
@@ -191,10 +251,6 @@ pie title Limites Mémoire par Conteneur
 
 ### Limites CPU
 
-> **Note** : Les valeurs `cpus` représentent une fraction d'un core CPU par conteneur.
-> Ce ne sont **pas des pourcentages du CPU total**, mais des limites individuelles.
-> Exemple : `cpus: 0.5` = le conteneur peut utiliser 50% d'**un** core CPU.
-
 ```mermaid
 flowchart LR
     subgraph Limites["Limites CPU par conteneur"]
@@ -205,14 +261,6 @@ flowchart LR
         CA["cAdvisor<br/>0.25 core"]
     end
 ```
-
-| Service | Limite CPU | Signification |
-|---------|-----------|---------------|
-| Frontend | `0.5` | Peut utiliser 50% d'un core |
-| PHP-FPM | `0.5` | Peut utiliser 50% d'un core |
-| Nginx | `0.25` | Peut utiliser 25% d'un core |
-| Portainer | `0.25` | Peut utiliser 25% d'un core |
-| cAdvisor | `0.25` | Peut utiliser 25% d'un core |
 
 ## Communication Inter-Services
 
@@ -255,8 +303,7 @@ Pour visualiser ces schémas :
 
 ## Voir aussi
 
-- **[README.md](README.md)** : Documentation principale (images, dépendances, arguments, démarrage rapide)
-- **[.env](.env)** : Variables de configuration des ressources
+- **[README.md](README.md)** : Documentation principale complète (images, dépendances, arguments, justifications des ressources, démarrage rapide)
 
 ---
 

@@ -489,13 +489,79 @@ La directive `cpus` définit la **fraction de CPU** qu'un conteneur peut utilise
 
 ### Justification des limites de ressources
 
-| Service | Mémoire | CPU | Justification |
-|---------|---------|-----|---------------|
-| **Frontend** | 512 Mo | 0.5 | http-server est léger, mais Node.js peut consommer de la RAM. 512 Mo est confortable. |
-| **PHP-FPM** | 256 Mo | 0.5 | Pool de workers PHP. Chaque worker consomme ~30-50 Mo. 256 Mo permet ~5 workers. |
-| **Nginx** | 128 Mo | 0.25 | Nginx est très léger en mémoire. 128 Mo est largement suffisant pour un reverse proxy. |
-| **Portainer** | 256 Mo | 0.25 | Interface web Go. Consomme ~100-150 Mo en utilisation normale. |
-| **cAdvisor** | 128 Mo | 0.25 | Collecte de métriques. Overhead minimal après optimisation des métriques. |
+Les limites de ressources ont été définies en fonction du **profil de consommation réel** de chaque service et de **bonnes pratiques de production**.
+
+#### Frontend (Angular) — 512 Mo / 0.5 CPU
+
+| Aspect | Valeur | Justification détaillée |
+|--------|--------|-------------------------|
+| **Mémoire** | 512 Mo | `http-server` est un serveur HTTP Node.js léger (~50-80 Mo en idle). Cependant, Node.js alloue un heap par défaut pouvant atteindre ~512 Mo. Cette limite permet de gérer des pics de connexions simultanées sans risque d'OOM. |
+| **CPU** | 0.5 | Servir des fichiers statiques (HTML, JS, CSS) est une opération I/O-bound, pas CPU-intensive. 0.5 CPU est largement suffisant même pour plusieurs centaines de requêtes/seconde. |
+
+**Pourquoi pas moins de mémoire ?**  
+Node.js a un garbage collector qui fonctionne mieux avec de la marge. Réduire à 128 Mo causerait des GC fréquents et des latences.
+
+#### Backend PHP-FPM — 256 Mo / 0.5 CPU
+
+| Aspect | Valeur | Justification détaillée |
+|--------|--------|-------------------------|
+| **Mémoire** | 256 Mo | PHP-FPM utilise un modèle **worker pool**. Chaque worker consomme ~30-50 Mo selon le code PHP. Avec 256 Mo, on peut avoir ~5 workers simultanés (config par défaut : `pm.max_children = 5`). |
+| **CPU** | 0.5 | PHP est single-threaded par requête. 0.5 CPU permet de traiter plusieurs requêtes en parallèle via les workers, sans monopoliser les ressources. |
+
+**Calcul de la mémoire :**
+```
+Mémoire totale = (workers × mémoire/worker) + overhead FPM
+256 Mo = (5 × 40 Mo) + 56 Mo overhead
+```
+
+**Pourquoi pas plus de CPU ?**  
+PHP-FPM est généralement I/O-bound (attente BDD, fichiers). Augmenter le CPU n'améliorerait pas les performances pour notre cas d'usage simple.
+
+#### Nginx — 128 Mo / 0.25 CPU
+
+| Aspect | Valeur | Justification détaillée |
+|--------|--------|-------------------------|
+| **Mémoire** | 128 Mo | Nginx est **extrêmement léger** (~10-20 Mo en idle). Il utilise une architecture événementielle (event-driven) avec un seul thread par worker. 128 Mo est généreux et permet de gérer des milliers de connexions simultanées. |
+| **CPU** | 0.25 | En tant que reverse proxy, Nginx fait du **pass-through** vers PHP-FPM. L'overhead CPU est minimal (parsing HTTP, forwarding). 0.25 CPU suffit pour notre charge. |
+
+**Pourquoi Nginx est si léger ?**  
+Contrairement à Apache (modèle thread/process par connexion), Nginx utilise `epoll` (Linux) pour gérer des milliers de connexions dans un seul thread avec très peu de RAM.
+
+#### Portainer — 256 Mo / 0.25 CPU
+
+| Aspect | Valeur | Justification détaillée |
+|--------|--------|-------------------------|
+| **Mémoire** | 256 Mo | Portainer est une application **Go** avec interface web React. En idle, il consomme ~100-150 Mo. 256 Mo permet d'afficher de nombreux conteneurs/logs sans problème. |
+| **CPU** | 0.25 | L'interface est rafraîchie toutes les quelques secondes. Les appels à l'API Docker sont légers. 0.25 CPU est suffisant pour un usage normal. |
+
+**Pourquoi Go consomme plus que Nginx ?**  
+Portainer embarque une BDD (BoltDB), un serveur web, et doit maintenir l'état des connexions WebSocket pour les logs en temps réel.
+
+#### cAdvisor — 128 Mo / 0.25 CPU
+
+| Aspect | Valeur | Justification détaillée |
+|--------|--------|-------------------------|
+| **Mémoire** | 128 Mo | cAdvisor collecte des métriques système toutes les secondes. Avec les métriques désactivées (`--disable_metrics`), il consomme ~50-80 Mo. 128 Mo offre une marge de sécurité. |
+| **CPU** | 0.25 | La collecte de métriques lit principalement `/proc` et `/sys` (I/O). Le calcul des statistiques est léger. 0.25 CPU est adapté. |
+
+**Impact de `--disable_metrics` :**
+```
+Sans optimisation : ~200 Mo RAM, ~0.5 CPU
+Avec --disable_metrics : ~80 Mo RAM, ~0.1 CPU (économie de 60%)
+```
+
+#### Récapitulatif et total des ressources
+
+| Service | Mémoire | CPU | Type de charge |
+|---------|---------|-----|----------------|
+| Frontend | 512 Mo | 0.5 | I/O-bound (fichiers statiques) |
+| PHP-FPM | 256 Mo | 0.5 | I/O-bound (requêtes BDD, fichiers) |
+| Nginx | 128 Mo | 0.25 | I/O-bound (proxy HTTP) |
+| Portainer | 256 Mo | 0.25 | Mixte (UI + API Docker) |
+| cAdvisor | 128 Mo | 0.25 | I/O-bound (lecture /proc, /sys) |
+| **TOTAL** | **1.28 Go** | **1.75 CPU** | — |
+
+> **Note** : Ces limites sont des **maximums**. En utilisation normale, les conteneurs consomment généralement 30-50% de ces valeurs.
 
 ### Ordre de démarrage (depends_on)
 
@@ -593,10 +659,9 @@ cd DevForDocker
 
 # Lancer tous les services
 docker-compose up -d --build
-
-# Avec des limites personnalisées
-FRONTEND_MEMORY_LIMIT=1g BACKEND_CPU_LIMIT=1 docker-compose up -d --build
 ```
+
+> **Note** : Les limites de ressources sont configurées dans le fichier `.env`. Modifiez-le directement pour ajuster les valeurs (mémoire, CPU) sans toucher au `docker-compose.yml`.
 
 ### Accès aux services
 

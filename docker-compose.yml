@@ -7,6 +7,9 @@ services:
     container_name: frontend-angular
     ports:
       - "4200:4200"
+    # Arguments au run : http-server sert les fichiers buildés sur le port 4200
+    # -c-1 désactive le cache HTTP (utile pour le développement)
+    command: ["http-server", "dist/frontend/browser", "-p", "4200", "-c-1"]
     networks:
       - app-network
     restart: unless-stopped
@@ -23,6 +26,9 @@ services:
       - ./backend/src:/var/www/html
     expose:
       - "9000"
+    # Arguments au run : -F force le mode foreground (nécessaire pour Docker)
+    # PHP-FPM écoute sur le port 9000 (configuré dans le Dockerfile via sed)
+    command: ["php-fpm8.3", "-F"]
     networks:
       - app-network
     restart: unless-stopped
@@ -45,6 +51,9 @@ services:
       - "8080:80"
     volumes:
       - ./backend/src:/var/www/html
+    # Arguments au run : nginx démarre en foreground (daemon off configuré dans Dockerfile)
+    # Pas d'arguments supplémentaires nécessaires
+    command: ["nginx"]
     depends_on:
       php-fpm:
         condition: service_healthy
@@ -71,6 +80,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+    # Arguments au run : --bind-https active HTTPS sur le port 9443
+    # --data spécifie le répertoire de stockage persistant
+    command: ["--bind-https", ":9443", "--data", "/data"]
     depends_on:
       nginx:
         condition: service_healthy
@@ -92,6 +104,8 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
+    # Arguments au run : --docker_only=true limite la surveillance aux conteneurs Docker
+    # --disable_metrics désactive les métriques non nécessaires pour réduire l'overhead
     command:
       - '--docker_only=true'
       - '--disable_metrics=percpu,sched,tcp,udp,disk,diskIO,hugetlb,referenced_memory,cpu_topology,resctrl'
