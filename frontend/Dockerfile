@@ -47,10 +47,12 @@ COPY . .
 # -----------------------------------------------------------------------------
 # Build de l'application Angular
 # -----------------------------------------------------------------------------
-# - npm install : installe les dépendances du package.json
+# - npm ci : installe les dépendances exactes depuis package-lock.json
+#   → Plus rapide et reproductible que npm install
+#   → Garantit un build identique à chaque fois
 # - ng build : compile l'application en mode production (optimisé)
 # -----------------------------------------------------------------------------
-RUN npm install && ng build --configuration=production
+RUN npm ci && ng build --configuration=production
 
 # -----------------------------------------------------------------------------
 # Script d'entrypoint avec gestion SIGTERM

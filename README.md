@@ -13,6 +13,8 @@
 - [Gestion des Signaux](#-gestion-des-signaux-darrêt)
 - [Démarrage Rapide](#-démarrage-rapide)
 
+*Présenté par Mickael FERNANDEZ*
+
 ---
 
 ## 🎯 Présentation
@@ -81,7 +83,7 @@ Tous les conteneurs sont connectés au réseau `app-network` (bridge), permettan
 | **Import clé GPG NodeSource** | `curl ... \| gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg` | Convertit la clé ASCII en format binaire pour apt |
 | **Ajout dépôt NodeSource** | `echo "deb [signed-by=...] ..." \| tee /etc/apt/sources.list.d/nodesource.list` | Ajoute le dépôt officiel Node.js (version récente vs Ubuntu par défaut) |
 | **Nettoyage cache apt** | `apt-get clean && rm -rf /var/lib/apt/lists/*` | Réduit la taille de l'image finale (~100 Mo économisés) |
-| **Installation dépendances npm** | `npm install` | Installe les dépendances définies dans package.json |
+| **Installation dépendances npm** | `npm ci` | Installe les dépendances exactes depuis `package-lock.json` (plus rapide et reproductible que `npm install`) |
 | **Build production** | `ng build --configuration=production` | Compile TypeScript → JavaScript optimisé dans `dist/` |
 
 #### Arguments au Run (CMD)
